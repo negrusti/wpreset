@@ -108,7 +108,13 @@ func fixture(t *testing.T) string {
 	} {
 		put(t, filepath.Join(root, filepath.FromSlash(path)), content)
 	}
-	return root
+	// Match the CLI's canonical path handling, including Windows 8.3 aliases
+	// used by hosted runners' TEMP directories.
+	canonical, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return canonical
 }
 
 func tree(t *testing.T, root string) map[string]string {
