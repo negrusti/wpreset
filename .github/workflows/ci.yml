@@ -1,0 +1,59 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: stable
+          cache: false
+      - name: Check formatting
+        run: test -z "$(gofmt -l .)"
+      - run: go vet ./...
+      - run: go test -count=1 -v ./...
+      - name: Verify static Linux build
+        if: runner.os == 'Linux'
+        run: CGO_ENABLED=0 go build -trimpath -o /tmp/wpreset .
+      - name: Smoke test official WordPress packages on a disposable site
+        if: runner.os == 'Linux'
+        run: |
+          set -euo pipefail
+          site="$(mktemp -d)"
+          trap 'rm -rf "$site"' EXIT
+          mkdir -p "$site/wp-admin" "$site/wp-includes" "$site/wp-content/plugins/hello-dolly" "$site/wp-content/uploads" "$site/wp-content/themes/custom"
+          printf '%s\n' '<?php' '$wp_version = "6.8.3";' > "$site/wp-includes/version.php"
+          printf '%s\n' '<?php' '/*' 'Plugin Name: Hello Dolly' 'Version: 1.7.2' '*/' > "$site/wp-content/plugins/hello-dolly/hello.php"
+          printf '%s' 'keep configuration' > "$site/wp-config.php"
+          printf '%s' 'keep theme' > "$site/wp-content/themes/custom/functions.php"
+          touch "$site/wp-admin/injected.php" "$site/wp-content/plugins/hello-dolly/injected.php" "$site/wp-content/uploads/test.PHP"
+          /tmp/wpreset --path "$site" --apply --report "$site-report.json"
+          test ! -e "$site/wp-admin/injected.php"
+          test ! -e "$site/wp-content/plugins/hello-dolly/injected.php"
+          test ! -e "$site/wp-content/uploads/test.PHP"
+          test -f "$site/wp-admin/admin.php"
+          test -f "$site/wp-content/plugins/hello-dolly/hello.php"
+          test "$(cat "$site/wp-config.php")" = 'keep configuration'
+          test "$(cat "$site/wp-content/themes/custom/functions.php")" = 'keep theme'

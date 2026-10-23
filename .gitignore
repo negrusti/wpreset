@@ -1,0 +1,7 @@
+/bin/
+/dist/
+/wpreset
+/wpreset.exe
+/.toolchain-path
+*.test
+*.out
