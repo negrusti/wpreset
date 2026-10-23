@@ -23,9 +23,12 @@ jobs:
         with:
           go-version: stable
           cache: false
+      - name: Install pinned YARA-X for filescan integration tests
+        run: bash .github/scripts/install-yara-x.sh
       - name: Validate and test release
         env:
           RELEASE_TAG: ${{ github.ref_name }}
+          FILESCAN_REQUIRE_YR: '1'
         run: |
           set -euo pipefail
           [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]
@@ -47,15 +50,31 @@ jobs:
             suffix=""
             if [ "$goos" = windows ]; then suffix=".exe"; fi
             GOOS="$goos" GOARCH="$goarch" go build -trimpath -ldflags="-s -w -X main.version=$RELEASE_TAG" -o "$stage/wpreset$suffix" .
-            cp README.md "$stage/README.md"
+            GOOS="$goos" GOARCH="$goarch" go build -trimpath -ldflags="-s -w -X main.version=$RELEASE_TAG" -o "$stage/dbscan$suffix" ./cmd/dbscan
+            GOOS="$goos" GOARCH="$goarch" go build -trimpath -ldflags="-s -w -X main.version=$RELEASE_TAG" -o "$stage/filescan$suffix" ./cmd/filescan
+            cp README.md DBSCAN.md FILESCAN.md "$stage/"
+            cp cmd/filescan/rules/LICENSE "$stage/FILESCAN-RULES-LICENSE.txt"
+            cp cmd/filescan/rules/README.md "$stage/FILESCAN-RULES.md"
+            files=("wpreset$suffix" "dbscan$suffix" "filescan$suffix" README.md DBSCAN.md FILESCAN.md FILESCAN-RULES-LICENSE.txt FILESCAN-RULES.md)
+            expected="$(printf '%s\n' "${files[@]}" | LC_ALL=C sort)"
             if [ "$goos" = windows ]; then
-              (cd "$stage" && zip -q "$GITHUB_WORKSPACE/dist/$name.zip" wpreset.exe README.md)
+              archive="$GITHUB_WORKSPACE/dist/$name.zip"
+              (cd "$stage" && zip -q "$archive" "${files[@]}")
+              actual="$(zipinfo -1 "$archive" | LC_ALL=C sort)"
             else
-              tar -czf "dist/$name.tar.gz" -C "$stage" wpreset README.md
+              archive="dist/$name.tar.gz"
+              tar -czf "$archive" -C "$stage" "${files[@]}"
+              actual="$(tar -tzf "$archive" | LC_ALL=C sort)"
             fi
-            rm -rf "$stage"
+            if [ "$actual" != "$expected" ]; then
+              printf 'Unexpected contents in %s:\n%s\n' "$archive" "$actual" >&2
+              exit 1
+            fi
+            rm -- "${files[@]/#/$stage/}"
+            rmdir -- "$stage"
           done
           (cd dist && sha256sum *.tar.gz *.zip > SHA256SUMS)
+          (cd dist && sha256sum --check SHA256SUMS)
       - name: Publish GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -64,4 +83,4 @@ jobs:
           set -euo pipefail
           prerelease=()
           if [[ "$RELEASE_TAG" == *-* ]]; then prerelease+=(--prerelease); fi
-          gh release create "$RELEASE_TAG" dist/* --verify-tag --title "wpreset $RELEASE_TAG" --generate-notes "${prerelease[@]}"
+          gh release create "$RELEASE_TAG" dist/* --verify-tag --title "wpreset, dbscan and filescan $RELEASE_TAG" --generate-notes "${prerelease[@]}"

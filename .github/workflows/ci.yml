@@ -30,6 +30,8 @@ jobs:
         with:
           go-version: stable
           cache: false
+      - name: Install pinned YARA-X for filescan integration tests
+        run: bash .github/scripts/install-yara-x.sh
       - name: Check formatting
         run: |
           unformatted="$(gofmt -l .)"
@@ -39,9 +41,30 @@ jobs:
           fi
       - run: go vet ./...
       - run: go test -count=1 -v ./...
-      - name: Verify static Linux build
-        if: runner.os == 'Linux'
-        run: CGO_ENABLED=0 go build -trimpath -o /tmp/wpreset .
+        env:
+          FILESCAN_REQUIRE_YR: '1'
+      - name: Build and smoke test all three tools
+        env:
+          CGO_ENABLED: '0'
+        run: |
+          set -euo pipefail
+          suffix=""
+          if [ "$RUNNER_OS" = Windows ]; then suffix=".exe"; fi
+          go build -trimpath -o "bin/wpreset$suffix" .
+          go build -trimpath -o "bin/dbscan$suffix" ./cmd/dbscan
+          go build -trimpath -o "bin/filescan$suffix" ./cmd/filescan
+          "./bin/wpreset$suffix" --version
+          "./bin/dbscan$suffix" --version
+          "./bin/filescan$suffix" --version
+          "./bin/filescan$suffix" --rules-info > bin/filescan-rules.txt
+          grep -Fq 'Neo23x0/signature-base' bin/filescan-rules.txt
+          status=0
+          "./bin/dbscan$suffix" --format=jsonl cmd/dbscan/testdata/example.sql > bin/dbscan-findings.jsonl || status=$?
+          test "$status" -eq 2
+          grep -Fq '"column":"option_value"' bin/dbscan-findings.jsonl
+          grep -Fq '"value":"1842"' bin/dbscan-findings.jsonl
+          grep -Fq '"value":"1843"' bin/dbscan-findings.jsonl
+          grep -Fq '"ambiguous":true' bin/dbscan-findings.jsonl
       - name: Smoke test official WordPress packages on a disposable site
         if: runner.os == 'Linux'
         run: |
@@ -54,7 +77,7 @@ jobs:
           printf '%s' 'keep configuration' > "$site/wp-config.php"
           printf '%s' 'keep theme' > "$site/wp-content/themes/custom/functions.php"
           touch "$site/wp-admin/injected.php" "$site/wp-content/plugins/hello-dolly/injected.php" "$site/wp-content/uploads/test.PHP"
-          /tmp/wpreset --path "$site" --apply --report "$site-report.json"
+          ./bin/wpreset --path "$site" --apply --report "$site-report.json"
           test ! -e "$site/wp-admin/injected.php"
           test ! -e "$site/wp-content/plugins/hello-dolly/injected.php"
           test ! -e "$site/wp-content/uploads/test.PHP"

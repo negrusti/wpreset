@@ -2,6 +2,10 @@
 /dist/
 /wpreset
 /wpreset.exe
+/dbscan
+/dbscan.exe
+/filescan
+/filescan.exe
 /.toolchain-path
 *.test
 *.out

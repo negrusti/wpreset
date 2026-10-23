@@ -4,6 +4,14 @@ A standalone Go command for replacing compromised WordPress files. No PHP,
 WP-CLI, database connection, Go modules, or external commands are needed at runtime.
 Linux is the primary platform; macOS and Windows binaries are also built.
 
+The companion [dbscan](DBSCAN.md) command scans MySQL database dumps offline and
+reports suspicious stored PHP/JavaScript by table, database row key and column.
+The companion [filescan](FILESCAN.md) command uses YARA-X (`yr`) and bundled
+Neo23x0 rules to find suspicious files, display Linux birth timestamps, and
+correlate them with current and rotated Nginx/Apache access logs.
+All three tools are included in each platform's release archive. `filescan`
+requires YARA-X to be installed separately.
+
 ## Install and run
 
 Download your platform's archive and `SHA256SUMS` from
@@ -13,6 +21,8 @@ Download your platform's archive and `SHA256SUMS` from
 sha256sum --ignore-missing --check SHA256SUMS
 tar -xzf wpreset_v0.1.0_linux_amd64.tar.gz
 sudo install -m 0755 wpreset /usr/local/bin/wpreset
+sudo install -m 0755 dbscan /usr/local/bin/dbscan
+sudo install -m 0755 filescan /usr/local/bin/filescan
 ```
 
 Use the archive name for the release you downloaded. Run as the site owner when
@@ -146,6 +156,8 @@ Use a supported Go toolchain:
 
 ```sh
 go build -trimpath -o wpreset .
+go build -trimpath -o dbscan ./cmd/dbscan
+go build -trimpath -o filescan ./cmd/filescan
 go test ./...
 go vet ./...
 
@@ -158,10 +170,15 @@ preview immutability, complete directory replacement, preserved paths, upload
 cleanup, failed-install rollback, journal recovery, archive defenses, and links
 (when the host permits creating them).
 
-GitHub Actions tests Linux and Windows on pushes and pull requests, including a
-Linux smoke test using real official packages on a disposable site. Pushing a
-version tag publishes compressed static binaries for Linux amd64/arm64, macOS
-amd64/arm64, and Windows amd64, plus `SHA256SUMS`:
+GitHub Actions tests, builds and smoke-tests all three tools on Linux and Windows on
+pushes and pull requests, including a Linux cleanup test using real official
+packages on a disposable site. Pushing a version tag publishes one archive per
+platform for Linux amd64/arm64, macOS amd64/arm64, and Windows amd64, plus
+`SHA256SUMS`. Each `wpreset_<version>_<os>_<arch>` archive contains `wpreset`,
+`dbscan`, `filescan`, `README.md`, `DBSCAN.md`, `FILESCAN.md`,
+`FILESCAN-RULES.md` and `FILESCAN-RULES-LICENSE.txt` (executables have `.exe` on Windows).
+CI and release validation also run real YARA-X scans with the bundled rules.
+Archive contents and checksums are verified before publication:
 
 ```sh
 git tag v0.1.0
@@ -172,8 +189,9 @@ git push origin v0.1.0
 
 1. **Persistence audit:** inspect preserved config, server rules, MU plugins,
    drop-ins, scheduled tasks, and unexpected executable files without executing PHP.
-2. **Database audit:** report unknown administrators, injected options/posts,
-   suspicious cron events, and changed site URLs using explicit database access.
+2. **Extend database audit:** the companion [dbscan](DBSCAN.md) command finds
+   suspicious code in offline SQL dumps. Administrator authorization, cron hook
+   provenance and site URL validation still require contextual review.
 3. **Credential and session rotation:** reset WordPress salts/sessions and guide
    rotation of hosting, SSH, database, and administrator credentials.
 4. **Upload execution hardening:** generate reviewable Apache/Nginx rules disabling

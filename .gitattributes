@@ -1,1 +1,4 @@
 * text=auto eol=lf
+# Preserve reviewed upstream rule/license bytes; their whitespace is intentional.
+cmd/filescan/rules/*.yar -whitespace
+cmd/filescan/rules/LICENSE -whitespace
