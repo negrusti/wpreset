@@ -50,6 +50,9 @@ not become a scan target.
 
 ## Reading the report
 
+Before scanning starts, filescan prints the selected ruleset and pinned revision
+(or the custom rules path) to stderr. This is also included in the final report.
+
 The following is illustrative; rule matches and attribution come from YARA-X:
 
 ```text
@@ -70,23 +73,39 @@ Access logs: 3  |  Lines read: 81924
    Last:  2026-10-23 08:40:11 UTC
 
    Request timeline (2 of 2 rows, earliest first):
-   TIME (UTC)           STATUS  METHOD  CLIENT / REQUEST
-   2026-10-22 03:15:02  200     "POST"  "192.0.2.10"  "/wp-content/uploads/cache.php"
-      "/var/log/nginx/access.log.2.gz":418
-   2026-10-23 08:40:11  404     "GET"   "192.0.2.11"  "/wp-content/uploads/cache.php?x=1"
-      "/var/log/nginx/access.log.1":710
+   TIME (UTC)           STATUS  METHOD  CLIENT IP
+   2026-10-22 03:15:02  200     "POST"  "192.0.2.10"
+   2026-10-23 08:40:11  404     "GET"   "192.0.2.11"
+
+...
+
+SUMMARY across all suspicious files
+   Suspicious files: 1  |  Matching requests: 2
+   Earliest known file birth: 2026-10-22 03:14:20 UTC  |  Unix: 1792638860
+   Earliest request: 2026-10-22 03:15:02 UTC
+   Unique client IPs: 2
+      192.0.2.10
+      192.0.2.11
 ```
 
 Each file gets one block, ordered by relative pathname. Requests are sorted by
-time across rotations, with source log and line number for investigation.
+time across rotations. Readable request rows show time, status, method and client
+IP without repeating the file's name or path. Full request targets, source logs
+and line numbers remain available in the JSON report for investigation.
 The default timeline shows the earliest **20** requests per file; totals,
 status counts and first/last times always include every matching entry read.
 Increase `--max-accesses` or set it to `0` to display all requests. Unlimited
 timelines require memory proportional to the number of matching log entries.
 All timestamps are converted to UTC, regardless of the log's original offset.
 Filenames, request fields and metadata are quoted to escape terminal controls.
-Request targets longer than 180 characters are shortened in the readable
-timeline; the JSON report retains the complete target.
+
+The final summary lists unique client IPs across all matching requests, the
+earliest matching request and the earliest known file birth across suspicious
+files. It includes requests omitted by `--max-accesses`. IPs are deduplicated and
+sorted, with equivalent IPv6 spellings normalized. Hostnames are not treated as
+IPs or resolved through DNS. Missing birth times or request history are shown as
+unavailable, and incomplete scans label the summary as partial. JSON output
+includes the same information in its `summary` object.
 
 **Born** is the filesystem's birth/creation time, shown as UTC and integer Unix
 seconds. On Linux, filescan obtains it from GNU `stat --format=%W`, which uses
@@ -149,7 +168,7 @@ Matching uses the request URL path, percent-decoded once, with the query
 excluded. Absolute-form requests are also accepted. A slash suffix is allowed
 for PHP `PATH_INFO` (`/shell.php/extra`). Different directories, filenames such
 as `shell.php.bak`, query references and referrer headers do not match.
-URLs in the timeline retain their original query strings.
+The JSON report retains full request URLs with their original query strings.
 
 The default assumes `--path` is served at `/`. Files under different virtual
 hosts can share the same URL path: select that site's own logs when possible.

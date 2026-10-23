@@ -141,6 +141,57 @@ func TestIncompleteLogs(t *testing.T) {
 	}
 }
 
+func TestRequestSummaryAcrossFiles(t *testing.T) {
+	name := filepath.Join(t.TempDir(), "access.log")
+	withClient := func(stamp, target, client string) string {
+		return strings.Replace(logLine(stamp, target, "200"), "192.0.2.5", client, 1)
+	}
+	put(t, name,
+		withClient("24/Oct/2026:12:00:00 +0000", "/uploads/shell-a.php?x=1", "192.0.2.9")+
+			withClient("23/Oct/2026:04:00:00 +0000", "/shell-b.php", "2001:0db8:0:0:0:0:0:1")+
+			withClient("24/Oct/2026:03:00:00 +0000", "/uploads/shell-a.php", "192.0.2.5")+
+			withClient("24/Oct/2026:04:00:00 +0000", "/uploads/shell-a.php/extra", "192.0.2.10")+
+			withClient("24/Oct/2026:04:00:00 +0000", "/shell-b.php", "2001:db8::1")+
+			withClient("24/Oct/2026:06:00:00 +0000", "/shell-b.php", "client.example")+
+			withClient("22/Oct/2026:00:00:00 +0000", "/unrelated.php", "192.0.2.99"))
+	aBirth := time.Date(2026, 10, 24, 0, 0, 0, 0, time.UTC).Unix()
+	bBirth := time.Date(2026, 10, 22, 3, 0, 0, 0, time.UTC).Unix()
+	a := &finding{Path: "uploads/shell-a.php", URLPath: "/uploads/shell-a.php", BirthUnix: &aBirth, Accesses: accessSummary{Statuses: map[string]int64{}}}
+	b := &finding{Path: "shell-b.php", URLPath: "/shell-b.php", BirthUnix: &bBirth, Accesses: accessSummary{Statuses: map[string]int64{}}}
+	r := report{Findings: []*finding{a, b}}
+	correlate(context.Background(), options{logs: stringsFlag{name}, maxAccesses: 1}, &r)
+	var out bytes.Buffer
+	if err := writeReport(&out, &r); err != nil {
+		t.Fatal(err)
+	}
+	s := r.Summary
+	if s.Requests != 6 || strings.Join(s.ClientIPs, ",") != "192.0.2.10,192.0.2.5,192.0.2.9,2001:db8::1" || s.EarliestRequest.Format(time.RFC3339) != "2026-10-23T04:00:00Z" || *s.EarliestBirthUnix != bBirth {
+		t.Fatalf("bad summary: %+v", s)
+	}
+	if len(a.Accesses.Events) != 1 || len(b.Accesses.Events) != 1 {
+		t.Fatal("test must exercise truncated timelines")
+	}
+	text := out.String()
+	if strings.Count(text, "shell-a.php") != 2 || strings.Count(text, "shell-b.php") != 2 || strings.Contains(text, name) {
+		t.Fatalf("request rows repeat file paths: %s", text)
+	}
+	for _, want := range []string{"CLIENT IP", "Matching requests: 6", "Earliest request: 2026-10-23 04:00:00 UTC", "Earliest known file birth: 2026-10-22 03:00:00 UTC", "Unique client IPs: 4"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("missing %q in %s", want, text)
+		}
+	}
+	if !strings.HasSuffix(text, "      2001:db8::1\n") {
+		t.Fatal("summary must be at the end")
+	}
+	encoded, err := json.Marshal(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(encoded), `"client_ips":["192.0.2.10","192.0.2.5","192.0.2.9","2001:db8::1"]`) || !strings.Contains(string(encoded), `"target":"/uploads/shell-a.php"`) || !strings.Contains(string(encoded), `"log":`) {
+		t.Fatalf("JSON lost summary or source detail: %s", encoded)
+	}
+}
+
 func TestCLISubprocessAndReadableReport(t *testing.T) {
 	root, err := filepath.EvalSymlinks(t.TempDir())
 	if err != nil {
@@ -274,6 +325,9 @@ func TestRealYaraX(t *testing.T) {
 	}
 	if r.Incomplete || r.Files != 2 || len(r.Findings) != 1 || r.Findings[0].Accesses.Count != 1 {
 		t.Fatalf("bad integration report: %s", out.String())
+	}
+	if r.Summary.Requests != 1 || len(r.Summary.ClientIPs) != 1 || r.Summary.ClientIPs[0] != "192.0.2.5" || r.Summary.EarliestRequest == nil {
+		t.Fatalf("missing CLI summary: %+v", r.Summary)
 	}
 	matched := false
 	for _, rule := range r.Findings[0].Rules {

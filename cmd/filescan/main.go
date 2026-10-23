@@ -47,16 +47,48 @@ type finding struct {
 }
 
 type report struct {
-	Root       string     `json:"root"`
-	Ruleset    string     `json:"ruleset"`
-	Files      int        `json:"files_submitted"`
-	Skipped    int        `json:"links_and_special_files_skipped"`
-	Logs       []string   `json:"logs"`
-	LogLines   int64      `json:"log_lines"`
-	Unparsed   int64      `json:"unparsed_log_lines"`
-	Incomplete bool       `json:"incomplete"`
-	Warnings   []string   `json:"warnings"`
-	Findings   []*finding `json:"findings"`
+	Root       string      `json:"root"`
+	Ruleset    string      `json:"ruleset"`
+	Files      int         `json:"files_submitted"`
+	Skipped    int         `json:"links_and_special_files_skipped"`
+	Logs       []string    `json:"logs"`
+	LogLines   int64       `json:"log_lines"`
+	Unparsed   int64       `json:"unparsed_log_lines"`
+	Incomplete bool        `json:"incomplete"`
+	Warnings   []string    `json:"warnings"`
+	Findings   []*finding  `json:"findings"`
+	Summary    scanSummary `json:"summary"`
+	clientIPs  map[string]bool
+}
+
+type scanSummary struct {
+	Requests          int64      `json:"requests"`
+	ClientIPs         []string   `json:"client_ips"`
+	EarliestRequest   *time.Time `json:"earliest_request_utc"`
+	EarliestBirthUnix *int64     `json:"earliest_birth_unix"`
+	EarliestBirthUTC  string     `json:"earliest_birth_utc,omitempty"`
+}
+
+func (r *report) summarize() {
+	s := scanSummary{ClientIPs: make([]string, 0, len(r.clientIPs))}
+	for ip := range r.clientIPs {
+		s.ClientIPs = append(s.ClientIPs, ip)
+	}
+	sort.Strings(s.ClientIPs)
+	for _, finding := range r.Findings {
+		a := finding.Accesses
+		s.Requests += a.Count
+		if a.First != nil && (s.EarliestRequest == nil || a.First.Before(*s.EarliestRequest)) {
+			s.EarliestRequest = a.First
+		}
+		if finding.BirthUnix != nil && (s.EarliestBirthUnix == nil || *finding.BirthUnix < *s.EarliestBirthUnix) {
+			s.EarliestBirthUnix = finding.BirthUnix
+		}
+	}
+	if s.EarliestBirthUnix != nil {
+		s.EarliestBirthUTC = time.Unix(*s.EarliestBirthUnix, 0).UTC().Format(time.RFC3339)
+	}
+	r.Summary = s
 }
 
 func main() {
@@ -132,6 +164,7 @@ func cli(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	if o.rules != "" {
 		r.Ruleset = "Custom rules: " + o.rules
 	}
+	fmt.Fprintf(stderr, "Ruleset: %q\n", r.Ruleset)
 	fmt.Fprintf(stderr, "Scanning %q with YARA-X...\n", root)
 	if err := scanFiles(ctx, o, &r); err != nil {
 		r.warn("YARA-X scan: "+err.Error(), true)
@@ -156,6 +189,7 @@ func cli(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	if ctx.Err() != nil {
 		r.warn("Scan interrupted", true)
 	}
+	r.summarize()
 	if o.format == "json" {
 		enc := json.NewEncoder(stdout)
 		enc.SetIndent("", "  ")

@@ -11,14 +11,6 @@ import (
 
 func utc(t time.Time) string { return t.UTC().Format("2006-01-02 15:04:05") }
 
-func quotedRequest(target string) string {
-	chars := []rune(target)
-	if len(chars) <= 180 {
-		return strconv.Quote(target)
-	}
-	return fmt.Sprintf("%s ... (%d more characters; full request in JSON)", strconv.Quote(string(chars[:180])), len(chars)-180)
-}
-
 func metaText(r rule, key string) string {
 	v := r.Meta[key]
 	if v == nil {
@@ -36,6 +28,7 @@ func metaText(r rule, key string) string {
 }
 
 func writeReport(w io.Writer, r *report) error {
+	r.summarize()
 	var b strings.Builder
 	state := "COMPLETE"
 	if r.Incomplete {
@@ -96,10 +89,9 @@ func writeReport(w io.Writer, r *report) error {
 			fmt.Fprintf(&b, "   Note: %d requests predate the current file's birth (e.g. replaced file, prior path, or clock differences).\n", a.BeforeBirth)
 		}
 		fmt.Fprintf(&b, "\n   Request timeline (%d of %d rows, earliest first):\n", len(a.Events), a.Count)
-		b.WriteString("   TIME (UTC)           STATUS  METHOD  CLIENT / REQUEST\n")
+		b.WriteString("   TIME (UTC)           STATUS  METHOD  CLIENT IP\n")
 		for _, event := range a.Events {
-			fmt.Fprintf(&b, "   %s  %3d     %-7s %s  %s\n", utc(event.Time), event.Status, strconv.Quote(event.Method), strconv.Quote(event.Client), quotedRequest(event.Target))
-			fmt.Fprintf(&b, "      %q:%d", event.Log, event.Line)
+			fmt.Fprintf(&b, "   %s  %3d     %-7s %s", utc(event.Time), event.Status, strconv.Quote(event.Method), strconv.Quote(event.Client))
 			if event.VHost != "" {
 				fmt.Fprintf(&b, "  vhost=%q", event.VHost)
 			}
@@ -111,6 +103,26 @@ func writeReport(w io.Writer, r *report) error {
 		b.WriteByte('\n')
 	}
 	b.WriteString("Matches need review. HTTP entries are requests, including errors; they do not prove execution.\nCorrelation uses URL paths relative to --path/--url-prefix. Shared-host logs, rewrites and aliases need context.\n")
+	b.WriteString("\nSUMMARY across all suspicious files")
+	if r.Incomplete {
+		b.WriteString(" (partial)")
+	}
+	b.WriteByte('\n')
+	fmt.Fprintf(&b, "   Suspicious files: %d  |  Matching requests: %d\n", len(r.Findings), r.Summary.Requests)
+	if r.Summary.EarliestBirthUnix != nil {
+		fmt.Fprintf(&b, "   Earliest known file birth: %s UTC  |  Unix: %d\n", utc(time.Unix(*r.Summary.EarliestBirthUnix, 0)), *r.Summary.EarliestBirthUnix)
+	} else {
+		b.WriteString("   Earliest known file birth: unavailable\n")
+	}
+	if r.Summary.EarliestRequest != nil {
+		fmt.Fprintf(&b, "   Earliest request: %s UTC\n", utc(*r.Summary.EarliestRequest))
+	} else {
+		b.WriteString("   Earliest request: unavailable (no matching requests read)\n")
+	}
+	fmt.Fprintf(&b, "   Unique client IPs: %d\n", len(r.Summary.ClientIPs))
+	for _, ip := range r.Summary.ClientIPs {
+		fmt.Fprintf(&b, "      %s\n", ip)
+	}
 	_, err := io.WriteString(w, b.String())
 	return err
 }

@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net"
 	"net/url"
 	"os"
 	"path"
@@ -252,6 +253,14 @@ func readLog(ctx context.Context, name string, max int, index map[string]*findin
 		for candidate := requestPath; candidate != ""; {
 			if finding := index[candidate]; finding != nil {
 				finding.record(e, max)
+				// Track clients before timeline truncation, across every matching
+				// request. Normalize equivalent IPv6/IPv4 spellings for uniqueness.
+				if ip := net.ParseIP(e.Client); ip != nil {
+					if r.clientIPs == nil {
+						r.clientIPs = make(map[string]bool)
+					}
+					r.clientIPs[ip.String()] = true
+				}
 				break
 			}
 			i := strings.LastIndexByte(candidate, '/')
